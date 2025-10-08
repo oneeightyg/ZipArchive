@@ -111,11 +111,12 @@ typedef NS_ENUM(NSInteger, SSZipArchiveErrorCode) {
 // without password
 + (BOOL)createZipFileAtPath:(NSString *)path withFilesAtPaths:(NSArray<NSString *> *)paths;
 + (BOOL)createZipFileAtPath:(NSString *)path withContentsOfDirectory:(NSString *)directoryPath;
-
 + (BOOL)createZipFileAtPath:(NSString *)path withContentsOfDirectory:(NSString *)directoryPath keepParentDirectory:(BOOL)keepParentDirectory;
 
-// with optional password, default encryption is AES
-// don't use AES if you need compatibility with native macOS unzip and Archive Utility
+// with optional password
+// - default is AES encryption
+// - don't use AES if you need compatibility with native macOS unzip and Archive Utility
+// - disabling AES will fallback to PKWARE traditional encryption
 + (BOOL)createZipFileAtPath:(NSString *)path withFilesAtPaths:(NSArray<NSString *> *)paths withPassword:(nullable NSString *)password;
 + (BOOL)createZipFileAtPath:(NSString *)path withFilesAtPaths:(NSArray<NSString *> *)paths withPassword:(nullable NSString *)password progressHandler:(void(^ _Nullable)(NSUInteger entryNumber, NSUInteger total))progressHandler;
 + (BOOL)createZipFileAtPath:(NSString *)path withContentsOfDirectory:(NSString *)directoryPath withPassword:(nullable NSString *)password;
@@ -144,38 +145,8 @@ typedef NS_ENUM(NSInteger, SSZipArchiveErrorCode) {
             progressHandler:(void(^ _Nullable)(NSUInteger entryNumber, NSUInteger total))progressHandler
                keepSymlinks:(BOOL)keeplinks;
 
-/// Create a zip file from the contents of a directory with the following arguments:
-///   *path* the path of the zip archive
-///   *withContentsOfDirectory* the path to the directory that should be archived
-///   *keepParentDirectory* if YES, then unzipping results in `directoryName/fileName`; otherwise, results in `fileName`
-///   *compressionLevel* controls how much compression is used, e.g. Z_DEFAULT_COMPRESSION (from "zlib.h")
-///   *password* is optional
-///   *aes* encryption should not be used if compatibility with native macOS unzip and Archive Utility is required
-///   *keepSymlinks* should symlinks be retained
-///   *useZip64* should the archive use the zip64 format (for extremely large zip files) or the older zip format
-///   *progressHandler* called repeatedly to update client of the number of files written to the archive
-+ (BOOL)createZipFileAtPath:(NSString *)path
-    withContentsOfDirectory:(NSString *)directoryPath
-        keepParentDirectory:(BOOL)keepParentDirectory
-           compressionLevel:(int)compressionLevel
-                   password:(nullable NSString *)password
-                        AES:(BOOL)aes
-               keepSymlinks:(BOOL)keeplinks
-                   useZip64:(BOOL)useZip64
-            progressHandler:(void(^ _Nullable)(NSUInteger entryNumber, NSUInteger total))progressHandler;
-
-
 - (instancetype)init NS_UNAVAILABLE;
-
-/// Convenience initializer that creates a zip archive (in the zip64 format) with:
-/// *path* the path of the zip archive
-- (instancetype)initWithPath:(NSString *)path;
-
-/// Designated initializer that creates a zip archive with:
-/// *path* the path of the zip archive
-/// *useZip64* should the archive use the zip64 format (for extremely large zip files) or the older zip format
-- (instancetype)initWithPath:(NSString *)path useZip64:(BOOL)useZip64 NS_DESIGNATED_INITIALIZER;
-
+- (instancetype)initWithPath:(NSString *)path NS_DESIGNATED_INITIALIZER;
 - (BOOL)open;
 - (BOOL)openForAppending;
 
@@ -192,8 +163,7 @@ typedef NS_ENUM(NSInteger, SSZipArchiveErrorCode) {
 ///   *password* is optional
 ///   *aes* encryption should not be used if compatibility with native macOS unzip and Archive Utility is required
 - (BOOL)writeFileAtPath:(NSString *)path withFileName:(nullable NSString *)fileName compressionLevel:(int)compressionLevel password:(nullable NSString *)password AES:(BOOL)aes;
-
-///write symlink files
+/// write symlink files
 - (BOOL)writeSymlinkFileAtPath:(NSString *)path withFileName:(nullable NSString *)fileName compressionLevel:(int)compressionLevel password:(nullable NSString *)password AES:(BOOL)aes;
 /// write data
 - (BOOL)writeData:(NSData *)data filename:(nullable NSString *)filename withPassword:(nullable NSString *)password;

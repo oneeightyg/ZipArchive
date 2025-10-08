@@ -14,9 +14,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "37952C251F63B50D00DD6677"
+               BlueprintIdentifier = "C8DEE3642BE59172005150F4"
                BuildableName = "ZipArchive.framework"
-               BlueprintName = "ZipArchive-tvos"
+               BlueprintName = "ZipArchive-visionos"
                ReferencedContainer = "container:ZipArchive.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -49,9 +49,9 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "37952C251F63B50D00DD6677"
+            BlueprintIdentifier = "C8DEE3642BE59172005150F4"
             BuildableName = "ZipArchive.framework"
-            BlueprintName = "ZipArchive-tvos"
+            BlueprintName = "ZipArchive-visionos"
             ReferencedContainer = "container:ZipArchive.xcodeproj">
          </BuildableReference>
       </MacroExpansion>

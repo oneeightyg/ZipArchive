@@ -15,9 +15,9 @@
 #include <stdio.h> /* rename */
 #include <errno.h>
 #if defined(HAVE_ICONV)
-#include <iconv.h>
+#  include <iconv.h>
 #endif
-
+#include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -37,17 +37,21 @@
 #  include <stdlib.h> /* arc4random_buf */
 #endif
 
+#ifndef MZ_PRESERVE_NATIVE_STRUCTURE
+#  define MZ_PRESERVE_NATIVE_STRUCTURE 1
+#endif
+
 /***************************************************************************/
 
 #if defined(HAVE_ICONV)
-uint8_t *mz_os_utf8_string_create(const char *string, int32_t encoding) {
+char *mz_os_utf8_string_create(const char *string, int32_t encoding) {
     iconv_t cd;
     const char *from_encoding = NULL;
     size_t result = 0;
     size_t string_length = 0;
     size_t string_utf8_size = 0;
-    uint8_t *string_utf8 = NULL;
-    uint8_t *string_utf8_ptr = NULL;
+    char *string_utf8 = NULL;
+    char *string_utf8_ptr = NULL;
 
     if (!string)
         return NULL;
@@ -71,12 +75,11 @@ uint8_t *mz_os_utf8_string_create(const char *string, int32_t encoding) {
 
     string_length = strlen(string);
     string_utf8_size = string_length * 2;
-    string_utf8 = (uint8_t *)calloc((int32_t)(string_utf8_size + 1), sizeof(char));
+    string_utf8 = (char *)calloc((int32_t)(string_utf8_size + 1), sizeof(char));
     string_utf8_ptr = string_utf8;
 
     if (string_utf8) {
-        result = iconv(cd, (char **)&string, &string_length,
-                (char **)&string_utf8_ptr, &string_utf8_size);
+        result = iconv(cd, (char **)&string, &string_length, (char **)&string_utf8_ptr, &string_utf8_size);
     }
 
     iconv_close(cd);
@@ -89,12 +92,12 @@ uint8_t *mz_os_utf8_string_create(const char *string, int32_t encoding) {
     return string_utf8;
 }
 #else
-uint8_t *mz_os_utf8_string_create(const char *string, int32_t encoding) {
-    return (uint8_t *)strdup(string);
+char *mz_os_utf8_string_create(const char *string, int32_t encoding) {
+    return strdup(string);
 }
 #endif
 
-void mz_os_utf8_string_delete(uint8_t **string) {
+void mz_os_utf8_string_delete(char **string) {
     if (string) {
         free(*string);
         *string = NULL;
@@ -147,7 +150,7 @@ int32_t mz_os_rand(uint8_t *buf, int32_t size) {
 
     /* Ensure different random header each time */
     if (++calls == 1) {
-        #define PI_SEED 3141592654UL
+#  define PI_SEED 3141592654UL
         srand((unsigned)(time(NULL) ^ PI_SEED));
     }
 
@@ -272,11 +275,11 @@ int32_t mz_os_make_dir(const char *path) {
     return MZ_OK;
 }
 
-DIR* mz_os_open_dir(const char *path) {
+DIR *mz_os_open_dir(const char *path) {
     return opendir(path);
 }
 
-struct dirent* mz_os_read_dir(DIR *dir) {
+struct dirent *mz_os_read_dir(DIR *dir) {
     if (!dir)
         return NULL;
     return readdir(dir);
@@ -288,6 +291,18 @@ int32_t mz_os_close_dir(DIR *dir) {
     if (closedir(dir) == -1)
         return MZ_INTERNAL_ERROR;
     return MZ_OK;
+}
+
+int32_t mz_os_is_dir_separator(const char c) {
+#if MZ_PRESERVE_NATIVE_STRUCTURE
+    // While not strictly adhering to 4.4.17.1,
+    // this preserves UNIX filesystem structure.
+    return c == '/';
+#else
+    // While strictly adhering to 4.4.17.1,
+    // this corrupts UNIX filesystem structure (a filename with a '\\' will become a folder + a file).
+    return c == '\\' || c == '/';
+#endif
 }
 
 int32_t mz_os_is_dir(const char *path) {
@@ -342,8 +357,15 @@ uint64_t mz_os_ms_time(void) {
 
     ts.tv_sec = mts.tv_sec;
     ts.tv_nsec = mts.tv_nsec;
-#else
+#elif !defined(_POSIX_MONOTONIC_CLOCK) || _POSIX_MONOTONIC_CLOCK < 0
+    clock_gettime(CLOCK_REALTIME, &ts);
+#elif _POSIX_MONOTONIC_CLOCK > 0
     clock_gettime(CLOCK_MONOTONIC, &ts);
+#else
+    if (sysconf(_SC_MONOTONIC_CLOCK) > 0)
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+    else
+        clock_gettime(CLOCK_REALTIME, &ts);
 #endif
 
     return ((uint64_t)ts.tv_sec * 1000) + ((uint64_t)ts.tv_nsec / 1000000);
