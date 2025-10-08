@@ -1379,6 +1379,9 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
     }
     mz_zip_file zipInfo = {};
     [SSZipArchive zipInfo:&zipInfo setDate:[NSDate date]];
+    
+    // Though we don't have a file, the uncompressed size is just the length of the data
+    zipInfo.uncompressed_size = data.length;
 
     int error = _zipOpenEntry(_zip, filename, &zipInfo, compressionLevel, password, aes, 1);
     zipWriteInFileInZip(_zip, data.bytes, (unsigned int)data.length);
