@@ -16,12 +16,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 extern NSString *const SSZipArchiveErrorDomain;
 typedef NS_ENUM(NSInteger, SSZipArchiveErrorCode) {
-    SSZipArchiveErrorCodeFailedOpenZipFile      = -1,
-    SSZipArchiveErrorCodeFailedOpenFileInZip    = -2,
-    SSZipArchiveErrorCodeFileInfoNotLoadable    = -3,
-    SSZipArchiveErrorCodeFileContentNotReadable = -4,
-    SSZipArchiveErrorCodeFailedToWriteFile      = -5,
-    SSZipArchiveErrorCodeInvalidArguments       = -6,
+    SSZipArchiveErrorCodeFailedOpenZipFile             = -1,
+    SSZipArchiveErrorCodeFailedOpenFileInZip           = -2,
+    SSZipArchiveErrorCodeFileInfoNotLoadable           = -3,
+    SSZipArchiveErrorCodeFileContentNotReadable        = -4,
+    SSZipArchiveErrorCodeFailedToWriteFile             = -5,
+    SSZipArchiveErrorCodeInvalidArguments              = -6,
+    SSZipArchiveErrorCodeSymlinkEscapesTargetDirectory = -7,
 };
 
 @protocol SSZipArchiveDelegate;
@@ -83,6 +84,18 @@ typedef NS_ENUM(NSInteger, SSZipArchiveErrorCode) {
         progressHandler:(void (^_Nullable)(NSString *entry, unz_file_info zipInfo, long entryNumber, long total))progressHandler
       completionHandler:(void (^_Nullable)(NSString *path, BOOL succeeded, NSError * _Nullable error))completionHandler;
 
++ (BOOL)unzipFileAtPath:(NSString *)path
+          toDestination:(NSString *)destination
+     preserveAttributes:(BOOL)preserveAttributes
+              overwrite:(BOOL)overwrite
+    symlinksValidWithin:(nullable NSString *)symlinksValidWithin
+         nestedZipLevel:(NSInteger)nestedZipLevel
+               password:(nullable NSString *)password
+                  error:(NSError **)error
+               delegate:(nullable id<SSZipArchiveDelegate>)delegate
+        progressHandler:(void (^_Nullable)(NSString *entry, unz_file_info zipInfo, long entryNumber, long total))progressHandler
+      completionHandler:(void (^_Nullable)(NSString *path, BOOL succeeded, NSError * _Nullable error))completionHandler;
+
 /// Locates the "entity" with `name` in the zip file at `path` and unzips it, returning it as data.
 /// Returns nil if there isn't an entity with that `name` or if any errors are encountered.
 /// The entity must be a file – directories and symlinks are ignored. Password-encrypted entities
@@ -98,11 +111,12 @@ typedef NS_ENUM(NSInteger, SSZipArchiveErrorCode) {
 // without password
 + (BOOL)createZipFileAtPath:(NSString *)path withFilesAtPaths:(NSArray<NSString *> *)paths;
 + (BOOL)createZipFileAtPath:(NSString *)path withContentsOfDirectory:(NSString *)directoryPath;
-
 + (BOOL)createZipFileAtPath:(NSString *)path withContentsOfDirectory:(NSString *)directoryPath keepParentDirectory:(BOOL)keepParentDirectory;
 
-// with optional password, default encryption is AES
-// don't use AES if you need compatibility with native macOS unzip and Archive Utility
+// with optional password
+// - default is AES encryption
+// - don't use AES if you need compatibility with native macOS unzip and Archive Utility
+// - disabling AES will fallback to PKWARE traditional encryption
 + (BOOL)createZipFileAtPath:(NSString *)path withFilesAtPaths:(NSArray<NSString *> *)paths withPassword:(nullable NSString *)password;
 + (BOOL)createZipFileAtPath:(NSString *)path withFilesAtPaths:(NSArray<NSString *> *)paths withPassword:(nullable NSString *)password progressHandler:(void(^ _Nullable)(NSUInteger entryNumber, NSUInteger total))progressHandler;
 + (BOOL)createZipFileAtPath:(NSString *)path withContentsOfDirectory:(NSString *)directoryPath withPassword:(nullable NSString *)password;
@@ -142,7 +156,7 @@ typedef NS_ENUM(NSInteger, SSZipArchiveErrorCode) {
 - (BOOL)writeFile:(NSString *)path withPassword:(nullable NSString *)password;
 - (BOOL)writeFileAtPath:(NSString *)path withFileName:(nullable NSString *)fileName withPassword:(nullable NSString *)password;
 - (BOOL)writeFileAtPath:(NSString *)path withFileName:(nullable NSString *)fileName compressionLevel:(int)compressionLevel password:(nullable NSString *)password AES:(BOOL)aes;
-///write symlink files
+/// write symlink files
 - (BOOL)writeSymlinkFileAtPath:(NSString *)path withFileName:(nullable NSString *)fileName compressionLevel:(int)compressionLevel password:(nullable NSString *)password AES:(BOOL)aes;
 /// write data
 - (BOOL)writeData:(NSData *)data filename:(nullable NSString *)filename withPassword:(nullable NSString *)password;
