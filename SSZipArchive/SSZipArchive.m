@@ -948,7 +948,7 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
             // Is this the file we are looking for?
             if ([strPath isEqualToString:name]) {
                 data = [[NSMutableData alloc] initWithLength:fileInfo.uncompressed_size];
-                int readBytes = unzReadCurrentFile(zip, data.mutableBytes, fileInfo.uncompressed_size);
+                int readBytes = unzReadCurrentFile(zip, data.mutableBytes, (unsigned)fileInfo.uncompressed_size);
                 if (readBytes != fileInfo.uncompressed_size) {
                     NSDictionary *userInfo = @{NSLocalizedDescriptionKey: @"Failed to read contents of file entity"};
                     unzippingError = [NSError errorWithDomain:SSZipArchiveErrorDomain
