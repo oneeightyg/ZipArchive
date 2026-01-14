@@ -963,7 +963,18 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
             }
 
             // Close the current file
-            unzCloseCurrentFile( zip );
+            int crc_ret = unzCloseCurrentFile(zip);
+            
+            // If the CRC check failed for the entity we are interested in,
+            // and we haven't already encountered an error, create a new error
+            if (foundEntity && crc_ret == MZ_CRC_ERROR && !unzippingError) {
+                NSDictionary *userInfo = @{NSLocalizedDescriptionKey: @"CRC check failed for file entity"};
+                unzippingError = [NSError errorWithDomain:SSZipArchiveErrorDomain
+                                                     code:SSZipArchiveErrorCRCCheckFailedFileInZip
+                                                 userInfo:userInfo];
+                // This is an error condition: set the data to nil
+                data = nil;
+            }
 
             // If we haven't found the entity yet, go to the next file
             if (!foundEntity) {
