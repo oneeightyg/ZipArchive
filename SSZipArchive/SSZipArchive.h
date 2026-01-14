@@ -37,6 +37,11 @@ typedef NS_ENUM(NSInteger, SSZipArchiveErrorCode) {
 // Total payload size
 + (NSNumber *)payloadSizeForArchiveAtPath:(NSString *)path error:(NSError **)error;
 
+/// Returns a list of all of the filenames in the archive at `path`
+/// Ignores symbolic links and directories
++ (nullable NSArray<NSString *> *)getEntityNamesFromFileAtPath:(NSString *)path
+                                                         error:(out NSError *__autoreleasing *)outError;
+
 // Unzip
 + (BOOL)unzipFileAtPath:(NSString *)path toDestination:(NSString *)destination;
 + (BOOL)unzipFileAtPath:(NSString *)path toDestination:(NSString *)destination delegate:(nullable id<SSZipArchiveDelegate>)delegate;

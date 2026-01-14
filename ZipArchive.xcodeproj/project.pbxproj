@@ -137,6 +137,10 @@
 		37952C881F63BBD500DD6677 /* SSZipArchive.h in Headers */ = {isa = PBXBuildFile; fileRef = B423AE481C0DF7950004A2F1 /* SSZipArchive.h */; settings = {ATTRIBUTES = (Public, ); }; };
 		37952C891F63BBDA00DD6677 /* SSZipArchive.m in Sources */ = {isa = PBXBuildFile; fileRef = B423AE491C0DF7950004A2F1 /* SSZipArchive.m */; };
 		37952C8B1F63BBE400DD6677 /* ZipArchive.h in Headers */ = {isa = PBXBuildFile; fileRef = B423AE4A1C0DF7950004A2F1 /* ZipArchive.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		6DE3851B2F18293500E399FD /* TestArchive.zip in Resources */ = {isa = PBXBuildFile; fileRef = 6DE3851A2F18293500E399FD /* TestArchive.zip */; };
+		6DE3851E2F18298200E399FD /* hello.zip in Resources */ = {isa = PBXBuildFile; fileRef = 6DE3851C2F18298200E399FD /* hello.zip */; };
+		6DE3851F2F18298200E399FD /* Unicode.zip in Resources */ = {isa = PBXBuildFile; fileRef = 6DE3851D2F18298200E399FD /* Unicode.zip */; };
+		6DE385212F182C6500E399FD /* Empty.zip in Resources */ = {isa = PBXBuildFile; fileRef = 6DE385202F182C6500E399FD /* Empty.zip */; };
 		6DF786272EE35CDD0043F3A8 /* ZipArchive.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AFF75A241C37279600F450AC /* ZipArchive.framework */; };
 		93CE5D5E227FE5C50003464F /* SSZipCommon.h in Headers */ = {isa = PBXBuildFile; fileRef = 93CE5D5D227FE5C50003464F /* SSZipCommon.h */; settings = {ATTRIBUTES = (Public, ); }; };
 		93CE5D5F227FE5C50003464F /* SSZipCommon.h in Headers */ = {isa = PBXBuildFile; fileRef = 93CE5D5D227FE5C50003464F /* SSZipCommon.h */; settings = {ATTRIBUTES = (Public, ); }; };
@@ -268,6 +272,10 @@
 		378439CB227AC031000BC165 /* libz.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libz.tbd; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS5.2.sdk/usr/lib/libz.tbd; sourceTree = DEVELOPER_DIR; };
 		37952C261F63B50D00DD6677 /* ZipArchive.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ZipArchive.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		37952C5E1F63BB7100DD6677 /* ZipArchive.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ZipArchive.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		6DE3851A2F18293500E399FD /* TestArchive.zip */ = {isa = PBXFileReference; lastKnownFileType = archive.zip; name = TestArchive.zip; path = Example/ObjectiveCExampleTests/Fixtures/TestArchive.zip; sourceTree = SOURCE_ROOT; };
+		6DE3851C2F18298200E399FD /* hello.zip */ = {isa = PBXFileReference; lastKnownFileType = archive.zip; name = hello.zip; path = Example/ObjectiveCExampleTests/Fixtures/hello.zip; sourceTree = SOURCE_ROOT; };
+		6DE3851D2F18298200E399FD /* Unicode.zip */ = {isa = PBXFileReference; lastKnownFileType = archive.zip; name = Unicode.zip; path = Example/ObjectiveCExampleTests/Fixtures/Unicode.zip; sourceTree = SOURCE_ROOT; };
+		6DE385202F182C6500E399FD /* Empty.zip */ = {isa = PBXFileReference; lastKnownFileType = archive.zip; name = Empty.zip; path = Example/ObjectiveCExampleTests/Fixtures/Empty.zip; sourceTree = SOURCE_ROOT; };
 		6DF786232EE35CDD0043F3A8 /* ZipArchiveTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ZipArchiveTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		93CE5D5D227FE5C50003464F /* SSZipCommon.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SSZipCommon.h; sourceTree = "<group>"; };
 		AFF75A241C37279600F450AC /* ZipArchive.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = ZipArchive.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -386,9 +394,21 @@
 			path = include;
 			sourceTree = "<group>";
 		};
+		6DE385192F18292300E399FD /* TestArchives */ = {
+			isa = PBXGroup;
+			children = (
+				6DE3851C2F18298200E399FD /* hello.zip */,
+				6DE385202F182C6500E399FD /* Empty.zip */,
+				6DE3851A2F18293500E399FD /* TestArchive.zip */,
+				6DE3851D2F18298200E399FD /* Unicode.zip */,
+			);
+			path = TestArchives;
+			sourceTree = "<group>";
+		};
 		B423AE101C0DF76A0004A2F1 = {
 			isa = PBXGroup;
 			children = (
+				6DE385192F18292300E399FD /* TestArchives */,
 				B423AE251C0DF7950004A2F1 /* SSZipArchive */,
 				6DF786242EE35CDD0043F3A8 /* ZipArchiveTests */,
 				3775F4242276C5C000A1840B /* Frameworks */,
@@ -792,6 +812,10 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6DE3851B2F18293500E399FD /* TestArchive.zip in Resources */,
+				6DE385212F182C6500E399FD /* Empty.zip in Resources */,
+				6DE3851E2F18298200E399FD /* hello.zip in Resources */,
+				6DE3851F2F18298200E399FD /* Unicode.zip in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
