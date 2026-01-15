@@ -875,18 +875,31 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
             crc_ret = unzCloseCurrentFile(zip);
             if (crc_ret == MZ_CRC_ERROR) {
                 // CRC ERROR
-                success = NO;
-                break;
+                // By default, CRC errors will be catastrophic, but our delegate can override this
+                BOOL breakOnCRCError = YES;
+                if ([delegate respondsToSelector:@selector(zipArchiveShouldTreatCRCErrorAsFailureForEntityPath:)]) {
+                    breakOnCRCError = [delegate zipArchiveShouldTreatCRCErrorAsFailureForEntityPath:strPath];
+                }
+                
+                if (breakOnCRCError) {
+                    // Break if required
+                    success = NO;
+                    break;
+                }
             }
             ret = unzGoToNextFile(zip);
 
-            // Message delegate
-            if ([delegate respondsToSelector:@selector(zipArchiveDidUnzipFileAtIndex:totalFiles:archivePath:fileInfo:)]) {
-                [delegate zipArchiveDidUnzipFileAtIndex:currentFileNumber totalFiles:(NSInteger)globalInfo.number_entry
-                                            archivePath:path fileInfo:fileInfo];
-            } else if ([delegate respondsToSelector: @selector(zipArchiveDidUnzipFileAtIndex:totalFiles:archivePath:unzippedFilePath:)]) {
-                [delegate zipArchiveDidUnzipFileAtIndex: currentFileNumber totalFiles: (NSInteger)globalInfo.number_entry
-                                            archivePath:path unzippedFilePath: fullPath];
+            // Don't call our `zipArchiveDidUnzipFile...` delegate methods if `unzCloseCurrentFile`
+            // resulted in a CRC error, and we're continuing to unzip the archive
+            if (crc_ret != MZ_CRC_ERROR) {
+                // Message delegate
+                if ([delegate respondsToSelector:@selector(zipArchiveDidUnzipFileAtIndex:totalFiles:archivePath:fileInfo:)]) {
+                    [delegate zipArchiveDidUnzipFileAtIndex:currentFileNumber totalFiles:(NSInteger)globalInfo.number_entry
+                                                archivePath:path fileInfo:fileInfo];
+                } else if ([delegate respondsToSelector: @selector(zipArchiveDidUnzipFileAtIndex:totalFiles:archivePath:unzippedFilePath:)]) {
+                    [delegate zipArchiveDidUnzipFileAtIndex: currentFileNumber totalFiles: (NSInteger)globalInfo.number_entry
+                                                archivePath:path unzippedFilePath: fullPath];
+                }
             }
 
             if (progressHandler)
