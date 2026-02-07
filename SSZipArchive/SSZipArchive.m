@@ -14,7 +14,8 @@
 #include "minizip/mz_os.h"
 #include <sys/stat.h>
 
-NSString *const SSZipArchiveErrorDomain = @"SSZipArchiveErrorDomain";
+NSString * const SSZipArchiveErrorDomain = @"SSZipArchiveErrorDomain";
+NSString * const SSZipArchiveUserInfoEntityPathKey = @"SSZipArchiveUserInfoEntityPath";
 
 #define CHUNK 16384
 
@@ -522,8 +523,8 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
 
     BOOL success = YES;
     BOOL canceled = NO;
-    int crc_ret = 0;
-    unsigned char buffer[4096] = {0};
+    // We often read 4096 bytes at a time, so make sure our buffer can hold it all
+    unsigned char buffer[4096 + 1] = {0};
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSMutableDictionary<NSString *, NSDictionary<NSString *, id> *> *directoriesModificationDates = [[NSMutableDictionary alloc] init];
     
@@ -536,378 +537,400 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
     }
 
     NSInteger currentFileNumber = -1;
-    NSError *unzippingError;
+    NSError *fatalError = nil;
     do {
         currentFileNumber++;
         if (ret == MZ_END_OF_LIST) {
             break;
         }
         @autoreleasepool {
-            if (password.length == 0) {
-                ret = unzOpenCurrentFile(zip);
-            } else {
-                ret = unzOpenCurrentFilePassword(zip, [password cStringUsingEncoding:NSUTF8StringEncoding]);
-            }
-
-            if (ret != UNZ_OK) {
-                unzippingError = [NSError errorWithDomain:@"SSZipArchiveErrorDomain" code:SSZipArchiveErrorCodeFailedOpenFileInZip userInfo:@{NSLocalizedDescriptionKey: @"failed to open file in zip file"}];
-                success = NO;
-                break;
-            }
-
-            // Reading data and write to file
             unz_file_info fileInfo;
-            memset(&fileInfo, 0, sizeof(unz_file_info));
-
-            ret = unzGetCurrentFileInfo(zip, &fileInfo, NULL, 0, NULL, 0, NULL, 0);
-            if (ret != UNZ_OK) {
-                unzippingError = [NSError errorWithDomain:@"SSZipArchiveErrorDomain" code:SSZipArchiveErrorCodeFileInfoNotLoadable userInfo:@{NSLocalizedDescriptionKey: @"failed to retrieve info for file"}];
-                success = NO;
-                unzCloseCurrentFile(zip);
-                break;
-            }
-
-            currentPosition += fileInfo.compressed_size;
-
-            // Message delegate
-            if ([delegate respondsToSelector:@selector(zipArchiveShouldUnzipFileAtIndex:totalFiles:archivePath:fileInfo:)]) {
-                if (![delegate zipArchiveShouldUnzipFileAtIndex:currentFileNumber
-                                                     totalFiles:(NSInteger)globalInfo.number_entry
-                                                    archivePath:path
-                                                       fileInfo:fileInfo]) {
-                    success = NO;
-                    canceled = YES;
-                    break;
-                }
-            }
-            if ([delegate respondsToSelector:@selector(zipArchiveWillUnzipFileAtIndex:totalFiles:archivePath:fileInfo:)]) {
-                [delegate zipArchiveWillUnzipFileAtIndex:currentFileNumber totalFiles:(NSInteger)globalInfo.number_entry
-                                             archivePath:path fileInfo:fileInfo];
-            }
-            if ([delegate respondsToSelector:@selector(zipArchiveProgressEvent:total:)]) {
-                [delegate zipArchiveProgressEvent:(NSInteger)currentPosition total:(NSInteger)fileSize];
-            }
-
-            char *filename = (char *)malloc(fileInfo.size_filename + 1);
-            if (filename == NULL)
-            {
-                success = NO;
-                break;
-            }
-
-            unzGetCurrentFileInfo(zip, &fileInfo, filename, fileInfo.size_filename + 1, NULL, 0, NULL, 0);
-            filename[fileInfo.size_filename] = '\0';
-
-            BOOL fileIsSymbolicLink = _fileIsSymbolicLink(&fileInfo);
-
-            NSString * strPath = [SSZipArchive _filenameStringWithCString:filename
-                                                          version_made_by:fileInfo.version
-                                                     general_purpose_flag:fileInfo.flag
-                                                                     size:fileInfo.size_filename];
-            free(filename);
-            if ([strPath _isResourceFork]) {
-                // ignoring resource forks: https://superuser.com/questions/104500/what-is-macosx-folder
-                unzCloseCurrentFile(zip);
-                ret = unzGoToNextFile(zip);
-                continue;
-            }
+            NSString *entityPath = nil;
+            NSString *fullPath = nil;
+            BOOL currentFileIsOpen = NO;
             
-            // https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT
-            // 4.4.17.1, All slashes MUST be forward slashes '/'
-            // So there is no need to replace '\\' with '/'.
-            // On the contrary, to preserve UNIX file structure, we do not want this replacement.
-            // Exceptionally, if the archive was made on Windows, we can do a sanity replacement as done in the project initial commit [09775a7].
-            // 4.4.2.2, FAT is 0, NTFS is 10.
-            uint16_t made_by = fileInfo.version >> 8;
-            if (made_by == 0 || made_by == 10) {
-                // Change Windows paths to Unix paths
-                strPath = [strPath stringByReplacingOccurrencesOfString:@"\\" withString:@"/"];
-            }
-            
-            // Check if it contains directory
-            BOOL isDirectory = [strPath _isDirectory];
-            
-            // Sanitize paths in the file name.
-            strPath = [strPath _sanitizedPath];
-            if (!strPath.length) {
-                // if filename data is unsalvageable, we default to currentFileNumber
-                // FIXME: this behavior should be made configurable
-                strPath = @(currentFileNumber).stringValue;
-            }
-
-            NSString *fullPath = [destination stringByAppendingPathComponent:strPath];
-            NSError *err = nil;
-            if (preserveAttributes) {
-                NSDate *modDate = fileInfo.mz_dos_date != 0 ? [[self class] _dateWithMSDOSFormat:(UInt32)fileInfo.mz_dos_date] : NSDate.now;
-                // aggregating files max modification date
-                NSArray<NSString *> *pathComponents = [strPath pathComponents];
-                NSUInteger leadingSlashCount = [pathComponents.firstObject isEqualToString:@"/"] ? 1 : 0;
-                // +1 to ignore the destination root
-                if (pathComponents.count > leadingSlashCount + 1) {
-                    // We strip the leading '/', the trailing '/' and the filename.
-                    pathComponents = [pathComponents subarrayWithRange:NSMakeRange(leadingSlashCount, pathComponents.count - 1 - leadingSlashCount)];
-                    // We enumerate each intermediate directory
-                    for (NSUInteger i = 0; i < pathComponents.count; i++) {
-                        NSString *directory = [[pathComponents subarrayWithRange:NSMakeRange(0, i + 1)] componentsJoinedByString:@"/"];
-                        NSDate *previousDate = directoriesModificationDates[directory][NSFileModificationDate];
-                        // We keep the newest date.
-                        if ([previousDate compare:modDate] != NSOrderedDescending) {
-                            directoriesModificationDates[directory] = @{NSFileModificationDate: modDate};
-                        }
-                    }
-                }
-            }
-            if (isDirectory) {
-                [fileManager createDirectoryAtPath:fullPath withIntermediateDirectories:YES attributes:nil error:&err];
-            } else {
-                [fileManager createDirectoryAtPath:fullPath.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:&err];
-            }
-            if (err != nil) {
-                if ([err.domain isEqualToString:NSCocoaErrorDomain] &&
-                    err.code == 640) {
-                    unzippingError = err;
-                    unzCloseCurrentFile(zip);
-                    success = NO;
-                    break;
-                }
-                NSLog(@"[SSZipArchive] Error: %@", err.localizedDescription);
-            }
-
-            if ([fileManager fileExistsAtPath:fullPath] && !isDirectory && !overwrite) {
-                //FIXME: couldBe CRC Check?
-                unzCloseCurrentFile(zip);
-                ret = unzGoToNextFile(zip);
-                continue;
-            }
-
-            if (isDirectory && !fileIsSymbolicLink) {
-                // nothing to read/write for a directory
-            } else if (!fileIsSymbolicLink) {
-                // ensure we are not creating stale file entries
-                int readBytes = unzReadCurrentFile(zip, buffer, 4096);
-                if (readBytes >= 0) {
-                    FILE *fp = fopen(fullPath.fileSystemRepresentation, "wb");
-                    while (fp) {
-                        if (readBytes > 0) {
-                            if (0 == fwrite(buffer, readBytes, 1, fp)) {
-                                if (ferror(fp)) {
-                                    NSString *message = [NSString stringWithFormat:@"Failed to write file (check your free space)"];
-                                    NSLog(@"[SSZipArchive] %@", message);
-                                    success = NO;
-                                    unzippingError = [NSError errorWithDomain:@"SSZipArchiveErrorDomain" code:SSZipArchiveErrorCodeFailedToWriteFile userInfo:@{NSLocalizedDescriptionKey: message}];
-                                    break;
-                                }
-                            }
-                        } else {
-                            break;
-                        }
-                        readBytes = unzReadCurrentFile(zip, buffer, 4096);
-                        if (readBytes < 0) {
-                            // Let's assume error Z_DATA_ERROR is caused by an invalid password
-                            // Let's assume other errors are caused by Content Not Readable
-                            success = NO;
-                        }
-                    }
-
-                    if (fp) {
-                        fclose(fp);
-
-                        if (nestedZipLevel
-                            && [fullPath.pathExtension.lowercaseString isEqualToString:@"zip"]
-                            && [self unzipFileAtPath:fullPath
-                                       toDestination:fullPath.stringByDeletingLastPathComponent
-                                  preserveAttributes:preserveAttributes
-                                           overwrite:overwrite
-                                 symlinksValidWithin:symlinksValidWithin
-                                      nestedZipLevel:nestedZipLevel - 1
-                                            password:password
-                                               error:nil
-                                            delegate:nil
-                                     progressHandler:nil
-                                   completionHandler:nil]) {
-                            [[NSFileManager defaultManager] removeItemAtPath:fullPath error:nil];
-                        } else if (preserveAttributes) {
-
-                            // Set the original datetime property
-                            if (fileInfo.mz_dos_date != 0) {
-                                NSDate *modDate = [[self class] _dateWithMSDOSFormat:(UInt32)fileInfo.mz_dos_date];
-                                NSDictionary *attr = @{NSFileModificationDate: modDate};
-                                NSError *err = nil;
-                                [fileManager setAttributes:attr ofItemAtPath:fullPath error:&err];
-                                if (err) {
-                                    NSLog(@"[SSZipArchive] Failed to set attributes - whilst setting original date: %@", err.localizedDescription);
-                                }
-                            }
-
-                            // Set the original permissions on the file (+read/write to solve #293)
-                            uLong permissions = fileInfo.external_fa >> 16 | 0b110000000;
-                            if (permissions != 0) {
-                                // Store it into a NSNumber
-                                NSNumber *permissionsValue = @(permissions);
-
-                                // Retrieve any existing attributes
-                                NSMutableDictionary *attrs = [[NSMutableDictionary alloc] initWithDictionary:[fileManager attributesOfItemAtPath:fullPath error:nil]];
-
-                                // Set the value in the attributes dict
-                                [attrs setObject:permissionsValue forKey:NSFilePosixPermissions];
-
-                                // Update attributes
-                                if (![fileManager setAttributes:attrs ofItemAtPath:fullPath error:nil]) {
-                                    // Unable to set the permissions attribute
-                                    NSLog(@"[SSZipArchive] Failed to set attributes - whilst setting permissions");
-                                }
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // if we couldn't open file descriptor we can validate global errno to see the reason
-                        int errnoSave = errno;
-                        BOOL isSeriousError = NO;
-                        switch (errnoSave) {
-                            case EISDIR:
-                                // Is a directory
-                                // assumed case
-                                break;
-
-                            case ENOSPC:
-                            case EMFILE:
-                                // No space left on device
-                                //  or
-                                // Too many open files
-                                isSeriousError = YES;
-                                break;
-
-                            default:
-                                // ignore case
-                                // Just log the error
-                            {
-                                NSError *errorObject = [NSError errorWithDomain:NSPOSIXErrorDomain
-                                                                           code:errnoSave
-                                                                       userInfo:nil];
-                                NSLog(@"[SSZipArchive] Failed to open file on unzipping.(%@)", errorObject);
-                            }
-                                break;
-                        }
-
-                        if (isSeriousError) {
-                            // serious case
-                            unzippingError = [NSError errorWithDomain:NSPOSIXErrorDomain
-                                                                 code:errnoSave
-                                                             userInfo:nil];
-                            unzCloseCurrentFile(zip);
-                            // Log the error
-                            NSLog(@"[SSZipArchive] Failed to open file on unzipping.(%@)", unzippingError);
-
-                            // Break unzipping
-                            success = NO;
-                            break;
-                        }
-                    }
+            @try {
+                if (password.length == 0) {
+                    ret = unzOpenCurrentFile(zip);
                 } else {
-                    // Let's assume error Z_DATA_ERROR is caused by an invalid password
-                    // Let's assume other errors are caused by Content Not Readable
-                    success = NO;
-                    break;
-                }
-            }
-            else
-            {
-                // Assemble the path for the symbolic link
-                NSMutableString *destinationPath = [NSMutableString string];
-                int bytesRead = 0;
-                while ((bytesRead = unzReadCurrentFile(zip, buffer, 4096)) > 0)
-                {
-                    buffer[bytesRead] = 0;
-                    [destinationPath appendString:@((const char *)buffer)];
-                }
-                if (bytesRead < 0) {
-                    // Let's assume error Z_DATA_ERROR is caused by an invalid password
-                    // Let's assume other errors are caused by Content Not Readable
-                    success = NO;
-                    break;
-                }
-
-                // compose symlink full path
-                NSString *symlinkFullDestinationPath = destinationPath;
-                if (![symlinkFullDestinationPath isAbsolutePath]) {
-                    symlinkFullDestinationPath = [[fullPath stringByDeletingLastPathComponent] stringByAppendingPathComponent:destinationPath];
-                }
-
-                if (symlinksValidWithin != nil && [symlinkFullDestinationPath _escapesTargetDirectory: symlinksValidWithin]) {
-                    NSString *message = [NSString stringWithFormat:@"Symlink escapes target directory \"~%@ -> %@\"", strPath, destinationPath];
-                    NSLog(@"[SSZipArchive] %@", message);
-                    success = NO;
-                    unzippingError = [NSError errorWithDomain:SSZipArchiveErrorDomain code:SSZipArchiveErrorCodeSymlinkEscapesTargetDirectory userInfo:@{NSLocalizedDescriptionKey: message}];
-                } else {
-                    // Check if the symlink exists and delete it if we're overwriting
-                    if (overwrite)
-                    {
-                        if ([fileManager fileExistsAtPath:fullPath])
-                        {
-                            NSError *localError = nil;
-                            BOOL removeSuccess = [fileManager removeItemAtPath:fullPath error:&localError];
-                            if (!removeSuccess)
-                            {
-                                NSString *message = [NSString stringWithFormat:@"Failed to delete existing symbolic link at \"%@\"", localError.localizedDescription];
-                                NSLog(@"[SSZipArchive] %@", message);
-                                success = NO;
-                                unzippingError = [NSError errorWithDomain:SSZipArchiveErrorDomain code:localError.code userInfo:@{NSLocalizedDescriptionKey: message}];
-                            }
-                        }
-                    }
-
-                    // Create the symbolic link (making sure it stays relative if it was relative before)
-                    int symlinkError = symlink([destinationPath cStringUsingEncoding:NSUTF8StringEncoding],
-                                               [fullPath cStringUsingEncoding:NSUTF8StringEncoding]);
-
-                    if (symlinkError != 0)
-                    {
-                        // Bubble the error up to the completion handler
-                        NSString *message = [NSString stringWithFormat:@"Failed to create symbolic link at \"%@\" to \"%@\" - symlink() error code: %d", fullPath, destinationPath, errno];
-                        NSLog(@"[SSZipArchive] %@", message);
-                        success = NO;
-                        unzippingError = [NSError errorWithDomain:NSPOSIXErrorDomain code:symlinkError userInfo:@{NSLocalizedDescriptionKey: message}];
-                    }
-                }
-            }
-
-            crc_ret = unzCloseCurrentFile(zip);
-            if (crc_ret == MZ_CRC_ERROR) {
-                // CRC ERROR
-                // By default, CRC errors will be catastrophic, but our delegate can override this
-                BOOL breakOnCRCError = YES;
-                if ([delegate respondsToSelector:@selector(zipArchiveShouldTreatCRCErrorAsFailureForEntityPath:)]) {
-                    breakOnCRCError = [delegate zipArchiveShouldTreatCRCErrorAsFailureForEntityPath:strPath];
+                    ret = unzOpenCurrentFilePassword(zip, password.UTF8String);
                 }
                 
-                if (breakOnCRCError) {
-                    // Break if required
+                if (ret != UNZ_OK) {
+                    // Encountered an error opening the current file
+                    NSError *localError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeFailedOpenFileInZip
+                                                               entityPath:nil
+                                                           additionalInfo:nil];
+                    if ([SSZipArchive dispositionForError:localError delegate:delegate] == SSZipErrorDispositionContinue) {
+                        continue;
+                    }
+                    
+                    // The error is fatal
+                    fatalError = localError;
                     success = NO;
                     break;
                 }
+                
+                // File is OPEN
+                currentFileIsOpen = YES;
+                
+                // Get file info
+                if (![SSZipArchive currentFileInfoForZip:zip
+                                                fileInfo:&fileInfo
+                                                filename:&entityPath]) {
+                    // Encountered an error getting the current file information
+                    NSError *localError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeFileInfoNotLoadable
+                                                               entityPath:entityPath
+                                                           additionalInfo:nil];
+                    if ([SSZipArchive dispositionForError:localError delegate:delegate] == SSZipErrorDispositionContinue) {
+                        continue;
+                    }
+                    
+                    // The error is fatal
+                    fatalError = localError;
+                    success = NO;
+                    break;
+                }
+                
+                // Update the current position
+                currentPosition += fileInfo.compressed_size;
+                
+                // Call delegate methods
+                //
+                if ([delegate respondsToSelector:@selector(zipArchiveShouldUnzipFileAtIndex:totalFiles:archivePath:fileInfo:)]) {
+                    if (![delegate zipArchiveShouldUnzipFileAtIndex:currentFileNumber
+                                                         totalFiles:(NSInteger)globalInfo.number_entry
+                                                        archivePath:path
+                                                           fileInfo:fileInfo]) {
+                        success = NO;
+                        canceled = YES;
+                        break;
+                    }
+                }
+                if ([delegate respondsToSelector:@selector(zipArchiveWillUnzipFileAtIndex:totalFiles:archivePath:fileInfo:)]) {
+                    [delegate zipArchiveWillUnzipFileAtIndex:currentFileNumber totalFiles:(NSInteger)globalInfo.number_entry
+                                                 archivePath:path fileInfo:fileInfo];
+                }
+                if ([delegate respondsToSelector:@selector(zipArchiveProgressEvent:total:)]) {
+                    [delegate zipArchiveProgressEvent:(NSInteger)currentPosition total:(NSInteger)fileSize];
+                }
+                
+                // Ignore resource forks: https://superuser.com/questions/104500/what-is-macosx-folder
+                if ([entityPath _isResourceFork]) {
+                    continue;
+                }
+                
+                // Sanitize the entity path
+                entityPath = [SSZipArchive sanitizedEntityPath:entityPath
+                                                      fileInfo:&fileInfo
+                                             currentFileNumber:currentFileNumber];
+                
+                // Construct the full path
+                fullPath = [destination stringByAppendingPathComponent:entityPath];
+                
+                NSError *err = nil;
+                if (preserveAttributes) {
+                    NSDate *modDate = fileInfo.mz_dos_date != 0 ? [[self class] _dateWithMSDOSFormat:(UInt32)fileInfo.mz_dos_date] : NSDate.now;
+                    // aggregating files max modification date
+                    NSArray<NSString *> *pathComponents = [entityPath pathComponents];
+                    NSUInteger leadingSlashCount = [pathComponents.firstObject isEqualToString:@"/"] ? 1 : 0;
+                    // +1 to ignore the destination root
+                    if (pathComponents.count > leadingSlashCount + 1) {
+                        // We strip the leading '/', the trailing '/' and the filename.
+                        pathComponents = [pathComponents subarrayWithRange:NSMakeRange(leadingSlashCount, pathComponents.count - 1 - leadingSlashCount)];
+                        // We enumerate each intermediate directory
+                        for (NSUInteger i = 0; i < pathComponents.count; i++) {
+                            NSString *directory = [[pathComponents subarrayWithRange:NSMakeRange(0, i + 1)] componentsJoinedByString:@"/"];
+                            NSDate *previousDate = directoriesModificationDates[directory][NSFileModificationDate];
+                            // We keep the newest date.
+                            if ([previousDate compare:modDate] != NSOrderedDescending) {
+                                directoriesModificationDates[directory] = @{NSFileModificationDate: modDate};
+                            }
+                        }
+                    }
+                }
+                
+                // Check if it contains directory
+                BOOL isDirectory = [entityPath _isDirectory];
+                if (isDirectory) {
+                    [fileManager createDirectoryAtPath:fullPath withIntermediateDirectories:YES attributes:nil error:&err];
+                } else {
+                    [fileManager createDirectoryAtPath:fullPath.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:&err];
+                }
+                if (err != nil) {
+                    if ([err.domain isEqualToString:NSCocoaErrorDomain] &&
+                        err.code == NSFileWriteOutOfSpaceError) {
+                        // Always treat this as fatal (and don't consult our delegate)
+                        fatalError = err;
+                        success = NO;
+                        break;
+                    }
+                    
+                    // Unexpected error condition, so just log
+                    // XXX Should we treat this error as fatal too?
+                    NSLog(@"[SSZipArchive] Error: %@", err.localizedDescription);
+                }
+                
+                if ([fileManager fileExistsAtPath:fullPath] && !isDirectory && !overwrite) {
+                    //FIXME: couldBe CRC Check?
+                    continue;
+                }
+                
+                BOOL fileIsSymbolicLink = _fileIsSymbolicLink(&fileInfo);
+                if (isDirectory && !fileIsSymbolicLink) {
+                    // nothing to read/write for a directory
+                } else if (!fileIsSymbolicLink) {
+                    int readBytes = 0;
+                    FILE *fp = NULL;
+                    
+                    // Open the file descriptor
+                    fp = fopen(fullPath.fileSystemRepresentation, "wb");
+                    if (!fp) {
+                        // We couldn't open the file descriptor
+                        // Examine global errno to see the reason
+                        // We'll use that to determine whether it's fatal or not
+                        // (rather than our delegate)
+                        NSError *seriousError = [SSZipArchive seriousErrorFromGlobalErrno];
+                        if (seriousError) {
+                            // It's serious. Fatal even.
+                            fatalError = seriousError;
+                            
+                            // Stop unzipping
+                            success = NO;
+                            break;
+                        }
+                        
+                        // This is not a serious error
+                        continue;
+                    }
+                    
+                    while ((readBytes = unzReadCurrentFile(zip, buffer, 4096)) > 0) {
+                        size_t written = fwrite(buffer, 1, (size_t)readBytes, fp);
+                        if (written != (size_t)readBytes) {
+                            // We couldn't write to the file. We're done.
+                            success = NO;
+                            break;
+                        }
+                    }
+                    // If we couldn't write to the file, treat as fatal (and don't consult our delegate)
+                    if (!success) {
+                        if (fp) {
+                            fclose(fp);
+                            fp = NULL;
+                        }
+                        fatalError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeFailedToWriteFile
+                                                          entityPath:entityPath
+                                                      additionalInfo:nil];
+                        break;
+                    }
+                    
+                    if (readBytes < 0) {
+                        // We encountered a read contents error
+                        if (fp) {
+                            fclose(fp);
+                            fp = NULL;
+                        }
+                        NSError *localError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeFileContentNotReadable
+                                                                   entityPath:entityPath
+                                                               additionalInfo:nil];
+                        if ([SSZipArchive dispositionForError:localError delegate:delegate] == SSZipErrorDispositionContinue) {
+                            continue;
+                        }
+                        
+                        // The error is fatal
+                        fatalError = localError;
+                        success = NO;
+                        break;
+                    }
+                    
+                    if (fp) {
+                        fclose(fp);
+                    }
+                    
+                    if (nestedZipLevel
+                        && [fullPath.pathExtension.lowercaseString isEqualToString:@"zip"]
+                        && [self unzipFileAtPath:fullPath
+                                   toDestination:fullPath.stringByDeletingLastPathComponent
+                              preserveAttributes:preserveAttributes
+                                       overwrite:overwrite
+                             symlinksValidWithin:symlinksValidWithin
+                                  nestedZipLevel:nestedZipLevel - 1
+                                        password:password
+                                           error:nil
+                                        delegate:nil
+                                 progressHandler:nil
+                               completionHandler:nil]) {
+                        [[NSFileManager defaultManager] removeItemAtPath:fullPath error:nil];
+                    } else if (preserveAttributes) {
+                        
+                        // Set the original datetime property
+                        if (fileInfo.mz_dos_date != 0) {
+                            NSDate *modDate = [[self class] _dateWithMSDOSFormat:(UInt32)fileInfo.mz_dos_date];
+                            NSDictionary *attr = @{NSFileModificationDate: modDate};
+                            NSError *err = nil;
+                            [fileManager setAttributes:attr ofItemAtPath:fullPath error:&err];
+                            if (err) {
+                                NSLog(@"[SSZipArchive] Failed to set attributes - whilst setting original date: %@", err.localizedDescription);
+                            }
+                        }
+                        
+                        // Set the original permissions on the file (+read/write to solve #293)
+                        uLong permissions = fileInfo.external_fa >> 16 | 0b110000000;
+                        if (permissions != 0) {
+                            // Store it into a NSNumber
+                            NSNumber *permissionsValue = @(permissions);
+                            
+                            // Retrieve any existing attributes
+                            NSMutableDictionary *attrs = [[NSMutableDictionary alloc] initWithDictionary:[fileManager attributesOfItemAtPath:fullPath error:nil]];
+                            
+                            // Set the value in the attributes dict
+                            [attrs setObject:permissionsValue forKey:NSFilePosixPermissions];
+                            
+                            // Update attributes
+                            if (![fileManager setAttributes:attrs ofItemAtPath:fullPath error:nil]) {
+                                // Unable to set the permissions attribute
+                                NSLog(@"[SSZipArchive] Failed to set attributes - whilst setting permissions");
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // Assemble the path for the symbolic link
+                    NSMutableString *destinationPath = [NSMutableString string];
+                    int bytesRead = 0;
+                    while ((bytesRead = unzReadCurrentFile(zip, buffer, 4096)) > 0)
+                    {
+                        buffer[bytesRead] = 0;
+                        [destinationPath appendString:@((const char *)buffer)];
+                    }
+                    if (bytesRead < 0) {
+                        NSError *localError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeFileContentNotReadable
+                                                                   entityPath:entityPath
+                                                               additionalInfo:nil];
+                        if ([SSZipArchive dispositionForError:localError delegate:delegate] == SSZipErrorDispositionContinue) {
+                            continue;
+                        }
+                        
+                        // The error is fatal
+                        fatalError = localError;
+                        success = NO;
+                        break;
+                    }
+                    
+                    // compose symlink full path
+                    NSString *symlinkFullDestinationPath = destinationPath;
+                    if (![symlinkFullDestinationPath isAbsolutePath]) {
+                        symlinkFullDestinationPath = [[fullPath stringByDeletingLastPathComponent] stringByAppendingPathComponent:destinationPath];
+                    }
+                    
+                    if (symlinksValidWithin != nil && [symlinkFullDestinationPath _escapesTargetDirectory: symlinksValidWithin]) {
+                        // Symlink escapes target directory
+                        // Construct additional info for our error
+                        NSString *additionalInfo = [NSString stringWithFormat:@"\"~%@ -> %@\"", entityPath, destinationPath];
+                        NSError *localError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeSymlinkEscapesTargetDirectory
+                                                                   entityPath:entityPath
+                                                               additionalInfo:additionalInfo];
+                        if ([SSZipArchive dispositionForError:localError delegate:delegate] == SSZipErrorDispositionContinue) {
+                            continue;
+                        }
+                        
+                        // The error is fatal
+                        fatalError = localError;
+                        success = NO;
+                        break;
+                    } else {
+                        // Check if the symlink exists and delete it if we're overwriting
+                        if (overwrite && [fileManager fileExistsAtPath:fullPath])
+                        {
+                            // Try to delete the existing symlink
+                            NSError *fmError = nil;
+                            BOOL removeSuccess = [fileManager removeItemAtPath:fullPath error:&fmError];
+                            if (!removeSuccess) {
+                                // Use the error description from the file manager for our additional info
+                                NSString *additionalInfo = fmError.localizedDescription;
+                                NSError *localError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeSymlinkNotRemoved
+                                                                           entityPath:entityPath
+                                                                       additionalInfo:additionalInfo];
+                                if ([SSZipArchive dispositionForError:localError delegate:delegate] == SSZipErrorDispositionContinue) {
+                                    continue;
+                                }
+                                
+                                // The error is fatal
+                                fatalError = localError;
+                                success = NO;
+                                break;
+                            }
+                        }
+                        
+                        // Create the symbolic link (making sure it stays relative if it was relative before)
+                        int symlinkError = symlink([destinationPath cStringUsingEncoding:NSUTF8StringEncoding],
+                                                   [fullPath cStringUsingEncoding:NSUTF8StringEncoding]);
+                        
+                        if (symlinkError != 0) {
+                            // Construct our additional info
+                            NSString *additionalInfo = [NSString stringWithFormat:@"\"%@\" to \"%@\" - symlink() error code: %d", fullPath, destinationPath, errno];
+                            NSError *localError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeSymlinkNotCreated
+                                                                       entityPath:entityPath
+                                                                   additionalInfo:additionalInfo];
+                            if ([SSZipArchive dispositionForError:localError delegate:delegate] == SSZipErrorDispositionContinue) {
+                                continue;
+                            }
+                            
+                            // The error is fatal
+                            fatalError = localError;
+                            success = NO;
+                            break;
+                        }
+                    }
+                }
+                
+                // We're done with the current file
+                ret = unzCloseCurrentFile(zip);
+                currentFileIsOpen = NO;
             }
-            ret = unzGoToNextFile(zip);
-
-            // Don't call our `zipArchiveDidUnzipFile...` delegate methods if `unzCloseCurrentFile`
-            // resulted in a CRC error, and we're continuing to unzip the archive
-            if (crc_ret != MZ_CRC_ERROR) {
-                // Message delegate
-                if ([delegate respondsToSelector:@selector(zipArchiveDidUnzipFileAtIndex:totalFiles:archivePath:fileInfo:)]) {
-                    [delegate zipArchiveDidUnzipFileAtIndex:currentFileNumber totalFiles:(NSInteger)globalInfo.number_entry
-                                                archivePath:path fileInfo:fileInfo];
-                } else if ([delegate respondsToSelector: @selector(zipArchiveDidUnzipFileAtIndex:totalFiles:archivePath:unzippedFilePath:)]) {
-                    [delegate zipArchiveDidUnzipFileAtIndex: currentFileNumber totalFiles: (NSInteger)globalInfo.number_entry
-                                                archivePath:path unzippedFilePath: fullPath];
+            @finally {
+                if (currentFileIsOpen) {
+                    // Ensure we always close an opened file
+                    // (e.g. if we arrive here due to continue/break)
+                    ret = unzCloseCurrentFile(zip);
+                    currentFileIsOpen = NO;
+                }
+                
+                if (success) {
+                    if (ret == MZ_CRC_ERROR) {
+                        // CRC ERROR
+                        NSError *localError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeCRCCheckFailed
+                                                                   entityPath:entityPath
+                                                               additionalInfo:nil];
+                        if ([SSZipArchive dispositionForError:localError delegate:delegate] == SSZipErrorDispositionContinue) {
+                            continue;
+                        }
+                        
+                        // The error is fatal
+                        fatalError = localError;
+                        success = NO;
+                        break;
+                    } else {
+                        // Don't call our `zipArchiveDidUnzipFile...` delegate methods if `unzCloseCurrentFile`
+                        // resulted in a CRC error, and we're continuing to unzip the archive
+                        // Message delegate
+                        if ([delegate respondsToSelector:@selector(zipArchiveDidUnzipFileAtIndex:totalFiles:archivePath:fileInfo:)]) {
+                            [delegate zipArchiveDidUnzipFileAtIndex:currentFileNumber totalFiles:(NSInteger)globalInfo.number_entry
+                                                        archivePath:path fileInfo:fileInfo];
+                        } else if ([delegate respondsToSelector: @selector(zipArchiveDidUnzipFileAtIndex:totalFiles:archivePath:unzippedFilePath:)]) {
+                            [delegate zipArchiveDidUnzipFileAtIndex: currentFileNumber totalFiles: (NSInteger)globalInfo.number_entry
+                                                        archivePath:path unzippedFilePath:fullPath];
+                        }
+                    }
+                    
+                    if (progressHandler) {
+                        progressHandler(entityPath, fileInfo, currentFileNumber, globalInfo.number_entry);
+                    }
                 }
             }
-
-            if (progressHandler)
-            {
-                progressHandler(strPath, fileInfo, currentFileNumber, globalInfo.number_entry);
-            }
         }
-    } while (ret == UNZ_OK && success);
+    } while (success && ((ret = unzGoToNextFile(zip)) == UNZ_OK));
 
     // Close
     unzClose(zip);
@@ -934,32 +957,203 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
         [delegate zipArchiveProgressEvent:fileSize total:fileSize];
     }
 
-    NSError *retErr = nil;
-    if (crc_ret == MZ_CRC_ERROR)
-    {
-        NSDictionary *userInfo = @{NSLocalizedDescriptionKey: @"crc check failed for file"};
-        retErr = [NSError errorWithDomain:SSZipArchiveErrorDomain code:SSZipArchiveErrorCodeFileInfoNotLoadable userInfo:userInfo];
+    if (error) {
+        *error = fatalError;
+    }
+    
+    if (completionHandler) {
+        completionHandler(path, success, fatalError);
+    }
+    
+    return success;
+}
+
++ (NSString *)sanitizedEntityPath:(NSString *)entityPath
+                         fileInfo:(unz_file_info *)fileInfo
+                currentFileNumber:(NSInteger)currentFileNumber
+{
+    NSString *sanitizedEntityPath = entityPath;
+    
+    // https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT
+    // 4.4.17.1, All slashes MUST be forward slashes '/'
+    // So there is no need to replace '\\' with '/'.
+    // On the contrary, to preserve UNIX file structure, we do not want this replacement.
+    // Exceptionally, if the archive was made on Windows, we can do a sanity replacement as done in the project initial commit [09775a7].
+    // 4.4.2.2, FAT is 0, NTFS is 10.
+    uint16_t made_by = fileInfo->version >> 8;
+    if (made_by == 0 || made_by == 10) {
+        // Change Windows paths to Unix paths
+        sanitizedEntityPath = [sanitizedEntityPath stringByReplacingOccurrencesOfString:@"\\" withString:@"/"];
+    }
+    
+    // Sanitize paths in the file name.
+    sanitizedEntityPath = [sanitizedEntityPath _sanitizedPath];
+    if (!sanitizedEntityPath.length) {
+        // if filename data is unsalvageable, we default to currentFileNumber
+        // FIXME: this behavior should be made configurable
+        sanitizedEntityPath = @(currentFileNumber).stringValue;
     }
 
-    if (error) {
-        if (unzippingError) {
-            *error = unzippingError;
-        }
-        else {
-            *error = retErr;
-        }
+    return sanitizedEntityPath;
+}
+
++ (BOOL)currentFileInfoForZip:(unzFile)zip
+                     fileInfo:(unz_file_info * _Nullable)outFileInfo
+                     filename:(NSString * _Nullable * _Nullable)outFilename
+{
+    unz_file_info fileInfo;
+    memset(&fileInfo, 0, sizeof(unz_file_info));
+
+    // First call to get filename size
+    if (unzGetCurrentFileInfo(zip, &fileInfo, NULL, 0, NULL, 0, NULL, 0) != UNZ_OK) {
+        return NO;
     }
-    if (completionHandler)
-    {
-        if (unzippingError) {
-            completionHandler(path, success, unzippingError);
-        }
-        else
-        {
-            completionHandler(path, success, retErr);
-        }
+    
+    // Allocate space for the filename
+    char *filename = malloc((size_t)fileInfo.size_filename + 1);
+    if (!filename) {
+        free(filename);
+        return NO;
     }
-    return success;
+
+    // Get the current file info *and* the filename
+    if (unzGetCurrentFileInfo(zip, &fileInfo, filename, fileInfo.size_filename + 1, NULL, 0, NULL, 0) != UNZ_OK) {
+        free(filename);
+        return NO;
+    }
+
+    // Terminate
+    filename[fileInfo.size_filename] = '\0';
+
+    if (outFilename) {
+        *outFilename = [SSZipArchive _filenameStringWithCString:filename
+                                                version_made_by:fileInfo.version
+                                           general_purpose_flag:fileInfo.flag
+                                                           size:fileInfo.size_filename];
+    }
+    
+    if (outFileInfo) {
+        *outFileInfo = fileInfo;
+    }
+    
+    free(filename);
+    return YES;
+}
+
++ (NSError *)seriousErrorFromGlobalErrno
+{
+    int err = errno;
+
+    // This is a directory, and is the assumed case
+    if (err == EISDIR) {
+        // This is not a serious error (or an error at all)
+        return nil;
+    }
+
+    // Construct the error
+    // This is a bit odd -- since we don't need to return the error when it
+    // isn't serious -- but we're preserving the previous behavior of logging
+    // a non-serious error
+    NSError *error = [NSError errorWithDomain:NSPOSIXErrorDomain
+                                         code:err
+                                     userInfo:nil];
+
+    // Preserve prior behavior: log whenever an error exists.
+    NSLog(@"[SSZipArchive] Failed to open file on unzipping: %@", error);
+
+    // Return the error if it's serious
+    switch (err) {
+        case ENOSPC: // No space left on device
+        case EMFILE: // Too many open files
+            return error;
+        default:
+            // Not a serious error
+            return nil;
+    }
+}
+
++ (SSZipErrorDisposition)dispositionForError:(NSError *)error
+                                    delegate:(id<SSZipArchiveDelegate>)delegate
+{
+    // Get the disposition from the delegate
+    if ([delegate respondsToSelector:@selector(zipArchiveDidEncounterEntityUnzipError:)]) {
+        return [delegate zipArchiveDidEncounterEntityUnzipError:error];
+    }
+    
+    // If we got here, the error is fatal
+    return SSZipErrorDispositionAbort;
+}
+
++ (NSError *)errorForErrorCode:(SSZipArchiveErrorCode)errorCode
+                    entityPath:(NSString *)entityPath
+                additionalInfo:(nullable NSString *)additionalInfo
+{
+    NSString *description;
+    switch (errorCode) {
+        case SSZipArchiveErrorCodeFailedOpenZipFile:
+            description = NSLocalizedString(@"Could not open archive",
+                                            @"`Could not open archive` error message");
+            break;
+        case SSZipArchiveErrorCodeFailedOpenFileInZip:
+            description = NSLocalizedString(@"Could not open file in archive",
+                                            @"`Could not open file in archive` error message");
+            break;
+        case SSZipArchiveErrorCodeFileInfoNotLoadable:
+            description = NSLocalizedString(@"Could not retrieve info for file in archive",
+                                            @"`Could not retrieve info for file in archive` error message");
+
+            break;
+        case SSZipArchiveErrorCodeFileContentNotReadable:
+            description = NSLocalizedString(@"Could not read contents of file in archive",
+                                            @"`Could not read contents of file in archive` error message");
+            break;
+        case SSZipArchiveErrorCodeFailedToWriteFile:
+            description = NSLocalizedString(@"Could not write file - check available space",
+                                            @"`Could not write file - check available space` error message");
+            break;
+        case SSZipArchiveErrorCodeInvalidArguments:
+            description = NSLocalizedString(@"File name or path is invalid",
+                                            @"`File name or path is invalid` error message");
+            break;
+        case SSZipArchiveErrorCodeSymlinkEscapesTargetDirectory:
+            description = NSLocalizedString(@"Symlink escapes target directory",
+                                            @"`Symlink escapes target directory` error message");
+            break;
+        case SSZipArchiveErrorCodeCRCCheckFailed:
+            description = NSLocalizedString(@"CRC check failed for file in archive",
+                                            @"`CRC check failed for file in archive` error message");
+
+            break;
+        case SSZipArchiveErrorCodeSymlinkNotRemoved:
+            description = NSLocalizedString(@"Could not remove symlink",
+                                            @"`Could not remove symlink` error message");
+
+            break;
+        case SSZipArchiveErrorCodeSymlinkNotCreated:
+            description = NSLocalizedString(@"Could not create symlink",
+                                            @"`Could not create symlink` error message");
+
+            break;
+    }
+    
+    
+    // Append any `additionalInfo` as a parenthetical
+    if (additionalInfo.length) {
+        description = [description stringByAppendingFormat:@" (%@)", additionalInfo];
+    }
+    
+    // Add the entity path to the user info dictionary
+    NSMutableDictionary *userInfo = [NSMutableDictionary dictionary];
+    userInfo[NSLocalizedDescriptionKey] = description;
+    
+    if (entityPath.length) {
+        userInfo[SSZipArchiveUserInfoEntityPathKey] = entityPath;
+    }
+
+    
+    return [NSError errorWithDomain:SSZipArchiveErrorDomain
+                               code:errorCode
+                           userInfo:userInfo];
 }
 
 // Modified (heavily) from unzipEntityName:fromFilePath:toDestination in vexdex's fork of ZipArchive:
@@ -1022,7 +1216,7 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
             if (crc_ret == MZ_CRC_ERROR && !readError) {
                 NSDictionary *userInfo = @{NSLocalizedDescriptionKey: @"CRC check failed for file entity"};
                 readError = [NSError errorWithDomain:SSZipArchiveErrorDomain
-                                                code:SSZipArchiveErrorCRCCheckFailedFileInZip
+                                                code:SSZipArchiveErrorCodeCRCCheckFailed
                                             userInfo:userInfo];
                 // This is an error condition: set the data to nil
                 entityData = nil;

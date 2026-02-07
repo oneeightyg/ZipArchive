@@ -23,8 +23,17 @@ typedef NS_ENUM(NSInteger, SSZipArchiveErrorCode) {
     SSZipArchiveErrorCodeFailedToWriteFile             = -5,
     SSZipArchiveErrorCodeInvalidArguments              = -6,
     SSZipArchiveErrorCodeSymlinkEscapesTargetDirectory = -7,
-    SSZipArchiveErrorCRCCheckFailedFileInZip           = -8,
+    SSZipArchiveErrorCodeCRCCheckFailed                = -8,
+    SSZipArchiveErrorCodeSymlinkNotRemoved             = -9,
+    SSZipArchiveErrorCodeSymlinkNotCreated             = -10,
 };
+
+typedef NS_ENUM(NSInteger, SSZipErrorDisposition) {
+    SSZipErrorDispositionContinue,      // ignore and proceed (e.g., skip file)
+    SSZipErrorDispositionAbort          // stop unzipping, treat as fatal
+};
+
+FOUNDATION_EXPORT NSString * const SSZipArchiveUserInfoEntityPathKey;
 
 @protocol SSZipArchiveDelegate;
 
@@ -189,8 +198,8 @@ typedef NS_ENUM(NSInteger, SSZipArchiveErrorCode) {
 - (BOOL)zipArchiveShouldUnzipFileAtIndex:(NSInteger)fileIndex totalFiles:(NSInteger)totalFiles archivePath:(NSString *)archivePath fileInfo:(unz_file_info)fileInfo;
 - (void)zipArchiveWillUnzipFileAtIndex:(NSInteger)fileIndex totalFiles:(NSInteger)totalFiles archivePath:(NSString *)archivePath fileInfo:(unz_file_info)fileInfo;
 
-/// Called when the entity at `path` has a CRC Error. Return NO, if unarchiving should continue (and not halt)
-- (BOOL)zipArchiveShouldTreatCRCErrorAsFailureForEntityPath:(NSString *)path;
+/// Called when there's an error unzipping an entity
+- (SSZipErrorDisposition)zipArchiveDidEncounterEntityUnzipError:(NSError *)error;
 
 - (void)zipArchiveDidUnzipFileAtIndex:(NSInteger)fileIndex totalFiles:(NSInteger)totalFiles archivePath:(NSString *)archivePath fileInfo:(unz_file_info)fileInfo;
 - (void)zipArchiveDidUnzipFileAtIndex:(NSInteger)fileIndex totalFiles:(NSInteger)totalFiles archivePath:(NSString *)archivePath unzippedFilePath:(NSString *)unzippedFilePath;
