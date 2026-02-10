@@ -3,7 +3,7 @@
 #if COCOAPODS
 #import <SSZipArchive.h>
 #else
-#import <ZipArchive.h>
+#import "ZipArchive.h"
 #endif
 
 
