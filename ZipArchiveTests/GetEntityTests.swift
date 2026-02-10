@@ -77,8 +77,8 @@ struct GetEntityTests {
     
     @Test func testGetEntityDataFailure() async throws {
         // It's an error to ask for an entity that doesn't exist in the archive
-        await #expect(throws: NSError.self) {
-            try await entityContents(archiveBasename: "TestArchive", entityName: "BadEntityName.txt")
+        #expect(throws: NSError.self) {
+            try entityContents(archiveBasename: "TestArchive", entityName: "BadEntityName.txt")
         }
     }
 }
