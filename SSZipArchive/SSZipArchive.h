@@ -26,6 +26,9 @@ typedef NS_ENUM(NSInteger, SSZipArchiveErrorCode) {
     SSZipArchiveErrorCodeCRCCheckFailed                = -8,
     SSZipArchiveErrorCodeSymlinkNotRemoved             = -9,
     SSZipArchiveErrorCodeSymlinkNotCreated             = -10,
+    SSZipArchiveErrorCodeFailedWriteFileInZip          = -11,
+    SSZipArchiveErrorCodeFailedCloseFileInZip          = -12,
+    SSZipArchiveErrorCodeFailedReadSourceFile          = -13,
 };
 
 typedef NS_ENUM(NSInteger, SSZipErrorDisposition) {
@@ -166,7 +169,7 @@ FOUNDATION_EXPORT NSString * const SSZipArchiveUserInfoEntityPathKey;
 - (BOOL)openForAppending;
 
 /// write empty folder
-- (BOOL)writeFolderAtPath:(NSString *)path withFolderName:(NSString *)folderName withPassword:(nullable NSString *)password;
+- (BOOL)writeFolderAtPath:(NSString *)path withFolderName:(NSString *)folderName withPassword:(nullable NSString *)password error:(out NSError *__autoreleasing *)outError;
 /// write file
 - (BOOL)writeFile:(NSString *)path withPassword:(nullable NSString *)password;
 - (BOOL)writeFileAtPath:(NSString *)path withFileName:(nullable NSString *)fileName withPassword:(nullable NSString *)password;
@@ -177,7 +180,7 @@ FOUNDATION_EXPORT NSString * const SSZipArchiveUserInfoEntityPathKey;
 ///   *compressionLevel* controls how much compression is used, e.g. Z_DEFAULT_COMPRESSION (from "zlib.h")
 ///   *password* is optional
 ///   *aes* encryption should not be used if compatibility with native macOS unzip and Archive Utility is required
-- (BOOL)writeFileAtPath:(NSString *)path withFileName:(nullable NSString *)fileName compressionLevel:(int)compressionLevel password:(nullable NSString *)password AES:(BOOL)aes;
+- (BOOL)writeFileAtPath:(NSString *)path withFileName:(nullable NSString *)fileName compressionLevel:(int)compressionLevel password:(nullable NSString *)password AES:(BOOL)aes error:(out NSError *__autoreleasing *)outError;
 /// write symlink files
 - (BOOL)writeSymlinkFileAtPath:(NSString *)path withFileName:(nullable NSString *)fileName compressionLevel:(int)compressionLevel password:(nullable NSString *)password AES:(BOOL)aes;
 /// write data

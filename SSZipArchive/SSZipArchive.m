@@ -1117,6 +1117,18 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
                                             @"`Could not create symlink` error message");
 
             break;
+        case SSZipArchiveErrorCodeFailedWriteFileInZip:
+            description = NSLocalizedString(@"Could not write file in archive",
+                                            @"`Could not write file in archive` error message");
+            break;
+        case SSZipArchiveErrorCodeFailedCloseFileInZip:
+            description = NSLocalizedString(@"Could not close file in archive",
+                                            @"`Could not close file in archive` error message");
+            break;
+        case SSZipArchiveErrorCodeFailedReadSourceFile:
+            description = NSLocalizedString(@"Could not read source file",
+                                            @"`Could not read source file` error message");
+            break;
     }
     
     
@@ -1257,7 +1269,7 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
             } else {
                 // directory
                 // we ignore its content, to allow for archiving this path only
-                success &= [zipArchive writeFolderAtPath:filePath withFolderName:filePath.lastPathComponent withPassword:password];
+                success &= [zipArchive writeFolderAtPath:filePath withFolderName:filePath.lastPathComponent withPassword:password error:NULL];
             }
             if (progressHandler) {
                 complete++;
@@ -1348,12 +1360,12 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
             [fileManager fileExistsAtPath:fullFilePath isDirectory:&isDir];
             if (!isDir) {
                 // file
-                success &= [self writeFileAtPath:fullFilePath withFileName:fileName compressionLevel:compressionLevel password:password AES:aes];
+                success &= [self writeFileAtPath:fullFilePath withFileName:fileName compressionLevel:compressionLevel password:password AES:aes error:NULL];
             } else {
                 // directory
                 if (![fileManager enumeratorAtPath:fullFilePath].nextObject) {
                     // empty directory
-                    success &= [self writeFolderAtPath:fullFilePath withFolderName:fileName withPassword:password];
+                    success &= [self writeFolderAtPath:fullFilePath withFolderName:fileName withPassword:password error:NULL];
                 }
             }
             if (progressHandler) {
@@ -1448,7 +1460,7 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
                 if (!isDir || isSymlink) {
                     // file or symlink
                     if (!isSymlink) {
-                        success &= [self writeFileAtPath:fullFilePath withFileName:fileName compressionLevel:compressionLevel password:password AES:aes];
+                        success &= [self writeFileAtPath:fullFilePath withFileName:fileName compressionLevel:compressionLevel password:password AES:aes error:NULL];
                     } else {
                         success &= [self writeSymlinkFileAtPath:fullFilePath withFileName:fileName compressionLevel:compressionLevel password:password AES:aes];
                     }
@@ -1456,7 +1468,7 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
                     // directory
                     if (![fileManager enumeratorAtPath:fullFilePath].nextObject) {
                         // empty directory
-                        success &= [self writeFolderAtPath:fullFilePath withFolderName:fileName withPassword:password];
+                        success &= [self writeFolderAtPath:fullFilePath withFolderName:fileName withPassword:password error:NULL];
                     }
                 }
                 if (progressHandler) {
@@ -1538,7 +1550,7 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
     return (NULL != _zip);
 }
 
-- (BOOL)writeFolderAtPath:(NSString *)path withFolderName:(NSString *)folderName withPassword:(nullable NSString *)password
+- (BOOL)writeFolderAtPath:(NSString *)path withFolderName:(NSString *)folderName withPassword:(nullable NSString *)password  error:(out NSError *__autoreleasing *)outError
 {
     NSAssert((_zip != NULL), @"Attempting to write to an archive which was never opened");
     
@@ -1546,11 +1558,42 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
     
     [SSZipArchive zipInfo:&zipInfo setAttributesOfItemAtPath:path];
     
-    int error = _zipOpenEntry(_zip, [folderName stringByAppendingString:@"/"], &zipInfo, Z_NO_COMPRESSION, password, NO, 1);
+    NSString *entryName = [folderName stringByAppendingString:@"/"];
+    int openRet = _zipOpenEntry(_zip, entryName, &zipInfo, Z_NO_COMPRESSION, password, NO, 1);
+    if (openRet != MZ_OK) {
+        if (outError) {
+            NSString *additionalInfo = [NSString stringWithFormat:@"underlying error code: %d", openRet];
+            *outError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeFailedOpenFileInZip
+                                             entityPath:entryName
+                                         additionalInfo:additionalInfo];
+        }
+        return NO;
+    }
+
     const void *buffer = NULL;
-    zipWriteInFileInZip(_zip, buffer, 0);
-    zipCloseFileInZip(_zip);
-    return error == ZIP_OK;
+    int writeRet = zipWriteInFileInZip(_zip, buffer, 0);
+    if (writeRet != ZIP_OK) {
+        if (outError) {
+            NSString *additionalInfo = [NSString stringWithFormat:@"underlying error code: %d", writeRet];
+            *outError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeFailedWriteFileInZip
+                                             entityPath:entryName
+                                         additionalInfo:additionalInfo];
+        }
+    }
+
+    int closeRet = zipCloseFileInZip(_zip);
+    // Only surface the close error if writing succeeded; otherwise the write error is the
+    // more meaningful root cause and we don't want to clobber it.
+    if (closeRet != ZIP_OK && writeRet == ZIP_OK) {
+        if (outError) {
+            NSString *additionalInfo = [NSString stringWithFormat:@"underlying error code: %d", closeRet];
+            *outError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeFailedCloseFileInZip
+                                             entityPath:entryName
+                                         additionalInfo:additionalInfo];
+        }
+    }
+
+    return writeRet == ZIP_OK && closeRet == ZIP_OK;
 }
 
 - (BOOL)writeFile:(NSString *)path withPassword:(nullable NSString *)password
@@ -1560,13 +1603,13 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
 
 - (BOOL)writeFileAtPath:(NSString *)path withFileName:(nullable NSString *)fileName withPassword:(nullable NSString *)password
 {
-    return [self writeFileAtPath:path withFileName:fileName compressionLevel:Z_DEFAULT_COMPRESSION password:password AES:YES];
+    return [self writeFileAtPath:path withFileName:fileName compressionLevel:Z_DEFAULT_COMPRESSION password:password AES:YES error:NULL];
 }
 
 // supports writing files with logical folder/directory structure
 // *path* is the absolute path of the file that will be compressed
 // *fileName* is the relative name of the file how it is stored within the zip e.g. /folder/subfolder/text1.txt
-- (BOOL)writeFileAtPath:(NSString *)path withFileName:(nullable NSString *)fileName compressionLevel:(int)compressionLevel password:(nullable NSString *)password AES:(BOOL)aes
+- (BOOL)writeFileAtPath:(NSString *)path withFileName:(nullable NSString *)fileName compressionLevel:(int)compressionLevel password:(nullable NSString *)password AES:(BOOL)aes error:(out NSError *__autoreleasing *)outError
 {
     NSAssert((_zip != NULL), @"Attempting to write to an archive which was never opened");
 
@@ -1590,18 +1633,62 @@ BOOL _fileIsSymbolicLink(const unz_file_info *fileInfo);
         return NO;
     }
 
-    int error = _zipOpenEntry(_zip, fileName, &zipInfo, compressionLevel, password, aes, 1);
+    int openRet = _zipOpenEntry(_zip, fileName, &zipInfo, compressionLevel, password, aes, 1);
+    if (openRet != MZ_OK) {
+        if (outError) {
+            NSString *additionalInfo = [NSString stringWithFormat:@"underlying error code: %d", openRet];
+            *outError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeFailedOpenFileInZip
+                                             entityPath:fileName
+                                         additionalInfo:additionalInfo];
+        }
+        free(buffer);
+        fclose(input);
+        return NO;
+    }
 
+    int writeRet = ZIP_OK;
     while (!feof(input) && !ferror(input))
     {
         unsigned int len = (unsigned int) fread(buffer, 1, CHUNK, input);
-        zipWriteInFileInZip(_zip, buffer, len);
+        writeRet = zipWriteInFileInZip(_zip, buffer, len);
+        if (writeRet != ZIP_OK) {
+            if (outError) {
+                NSString *additionalInfo = [NSString stringWithFormat:@"underlying error code: %d", writeRet];
+                *outError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeFailedWriteFileInZip
+                                                 entityPath:fileName
+                                             additionalInfo:additionalInfo];
+            }
+            break;
+        }
     }
 
-    zipCloseFileInZip(_zip);
+    // zipWriteInFileInZip might succeed, but we could still encounter an error writing the stream
+    if (writeRet == ZIP_OK && ferror(input)) {
+        if (outError) {
+            // ferror() just reports whether something went wrong, and errno contains the code for the reason
+            NSString *additionalInfo = [NSString stringWithFormat:@"underlying error code: %d", errno];
+            *outError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeFailedReadSourceFile
+                                             entityPath:path
+                                         additionalInfo:additionalInfo];
+        }
+        writeRet = ZIP_ERRNO;
+    }
+
+    int closeRet = zipCloseFileInZip(_zip);
+    // Only surface the close error if writing succeeded; otherwise the write/read error is the
+    // more meaningful root cause and we don't want to clobber it.
+    if (closeRet != ZIP_OK && writeRet == ZIP_OK) {
+        if (outError) {
+            NSString *additionalInfo = [NSString stringWithFormat:@"underlying error code: %d", closeRet];
+            *outError = [SSZipArchive errorForErrorCode:SSZipArchiveErrorCodeFailedCloseFileInZip
+                                             entityPath:fileName
+                                         additionalInfo:additionalInfo];
+        }
+    }
+
     free(buffer);
     fclose(input);
-    return error == ZIP_OK;
+    return writeRet == ZIP_OK && closeRet == ZIP_OK;
 }
 
 
